@@ -33,6 +33,7 @@ def read_data_to_index(file_path, min_length=0, split_ratio=0.0):
     icd_distict = get_icd_distinct(icd_data)
     icd_data = filter_by_length(icd_data, min_length=min_length)
     icd_idx_list = get_icd_idx(icd_data, icd_distict)
+    n_classes = max([len(c) for c in icd_idx_list])
     random.shuffle(icd_idx_list)
     train_data = icd_idx_list
     val_data = None
@@ -45,7 +46,7 @@ def read_data_to_index(file_path, min_length=0, split_ratio=0.0):
     del icd_data, icd_idx_list
     gc.collect()
 
-    return train_data, val_data, icd_distict
+    return train_data, val_data, icd_distict, n_classes
 
 
 def read_train_and_val_data_to_index(file_path_train, file_path_val):
@@ -56,11 +57,11 @@ def read_train_and_val_data_to_index(file_path_train, file_path_val):
     val_icd = filter_by_length(val_icd, min_length=1)
     train_icd_idx_list = get_icd_idx(train_icd, icd_distict)
     val_icd_idx_list = get_icd_idx(val_icd, icd_distict)
-
+    n_classes = max([len(c) for c in train_icd_idx_list + val_icd_idx_list])
     del train_icd, val_icd
     gc.collect()
 
-    return train_icd_idx_list, val_icd_idx_list, icd_distict
+    return train_icd_idx_list, val_icd_idx_list, icd_distict, n_classes
 
 
 def read_test_data_for_prediction(file_path, icd_distict, normalize=False):
@@ -91,8 +92,28 @@ def to_one_hot(case, n_values):
     return one_hot
 
 
+def get_input_sequence_and_gt(cases, max_len):
+    random.shuffle(cases)
+
+    for case in cases:
+        case.sort()
+        case_np = np.array(case)
+        y_idx = random.randint(0, (len(case)))
+        y = case_np[y_idx] + 1
+        x = np.zeros((max_len), dtype=int)
+        x_tmp = np.delete(case, y_idx, 0) + 1
+        x[:x_tmp.shape[0]] = x_tmp
+
+        yield x, y
+
+
 def to_one_hot_with_gt_generator(cases, n_values, random_gt_index=True, normalize=False):
     random.shuffle(cases)
+    avg = 0
+    for c in cases:
+        avg += len(c)
+
+    avg /= len(cases)
     for case in cases:
         oh = to_one_hot(case, n_values)
         n_icd = oh.shape[0]
@@ -103,7 +124,7 @@ def to_one_hot_with_gt_generator(cases, n_values, random_gt_index=True, normaliz
         x = np.delete(oh, y_idx, 0)
         train_vector_x = np.sum(x, axis=0)
         if normalize:
-            train_vector_x /= np.sum(x)
+            train_vector_x /= avg
         yield train_vector_x, y
 
 

@@ -34,14 +34,14 @@ def RecommenderNet(n_in_classes, n_out_classes, n_layers, layer_size, decay_laye
     x = input_layer
 
     if embedding_size > 0:
-        embeddings = Embedding(n_in_classes, embedding_size, embeddings_initializer='he_normal',
+        embeddings = Embedding(n_out_classes, embedding_size, embeddings_initializer='he_normal',
                                embeddings_regularizer=l2(1e-6))(input_layer)
         embeddings_flat = Flatten()(embeddings)
         embeddings_d = Dropout(dropout_rate)(embeddings_flat)
         x = embeddings_d
 
     for i in range(0, n_layers):
-        x = Dense(layer_size, kernel_initializer='he_normal')(x)
+        x = Dense(layer_size, kernel_initializer='he_normal', kernel_regularizer=l2(0.001), bias_regularizer=l2(0.001))(x)
         x = Activation('relu')(x)
         x = Dropout(dropout_rate)(x)
         if decay_layer_size:
@@ -117,16 +117,21 @@ if __name__ == '__main__':
     n = text_file.write(str(args))
     text_file.close()
 
-    #train_data, val_data, classes = dt.read_data_to_index(train_data_path, min_length=1, split_ratio=0.9)
-    train_data, val_data, classes = dt.read_train_and_val_data_to_index(train_data_path, test_data_path)
+    #train_data, val_data, classes, len_input = dt.read_data_to_index(train_data_path, min_length=1, split_ratio=0.9)
+    train_data, val_data, classes, len_input = dt.read_train_and_val_data_to_index(train_data_path, test_data_path)
+
+    if embedding_size <= 0:
+        len_input = len(classes)
 
     training_generator = data.Dataset.from_generator(
-        lambda : dt.to_one_hot_with_gt_generator(train_data, len(classes), True, False),
+        #lambda : dt.to_one_hot_with_gt_generator(train_data, len_input, True, False),
+        lambda : dt.get_input_sequence_and_gt(train_data, len_input),
         output_types=(tf.int32, tf.int32))
     training_generator = training_generator.shuffle(buffer_size=4096).batch(batch_size)
 
     validation_generator = data.Dataset.from_generator(
-        lambda : dt.to_one_hot_with_gt_generator(val_data, len(classes), True, False),
+        #lambda : dt.to_one_hot_with_gt_generator(val_data, len_input, True, False),
+        lambda : dt.get_input_sequence_and_gt(val_data, len_input),
         output_types=(tf.int32, tf.int32))
     validation_generator = validation_generator.shuffle(buffer_size=4096).batch(1)
 
@@ -135,7 +140,7 @@ if __name__ == '__main__':
     else:
         # initial recommender system
         recommender = RecommenderNet(
-            n_in_classes=len(classes),
+            n_in_classes=len_input,
             n_out_classes=len(classes),
             embedding_size=embedding_size,
             n_layers=nr_hidden_layers,

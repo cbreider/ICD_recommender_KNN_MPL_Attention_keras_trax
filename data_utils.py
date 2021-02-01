@@ -3,7 +3,7 @@ import math
 import numpy as np
 import gc
 import random
-import tensorflow as tf
+
 
 def read_icd_data(file_path):
     df = pd.read_csv(file_path)
@@ -87,24 +87,33 @@ def read_test_data_for_prediction(file_path, icd_distict, normalize=False):
 
 def to_one_hot(case, n_values):
     np_case = np.array(case)
-    one_hot = np.zeros((np_case.size, n_values))
+    one_hot = np.zeros((np_case.size, n_values), np.int32)
     one_hot[np.arange(np_case.size), np_case] = 1
     return one_hot
 
 
-def get_input_sequence_and_gt(cases, max_len):
+def get_input_sequence_and_gt(cases, max_len, batch_size):
     random.shuffle(cases)
-
-    for case in cases:
-        case.sort()
-        case_np = np.array(case)
-        y_idx = random.randint(0, (len(case)))
-        y = case_np[y_idx] + 1
-        x = np.zeros((max_len), dtype=int)
-        x_tmp = np.delete(case, y_idx, 0) + 1
-        x[:x_tmp.shape[0]] = x_tmp
-
-        yield x, y
+    count = 0
+    while True:
+        batch_x = np.zeros((batch_size, max_len), dtype=np.int32)
+        batch_y = np.zeros((batch_size,), dtype=np.int32)
+        for i in range(0, batch_size):
+            case = cases[count]
+            case.sort()
+            case_np = np.array(case)
+            y_idx = random.randint(0, (len(case)-1))
+            y_j = case_np[y_idx]
+            x_j = np.zeros((max_len), dtype=np.int32)
+            x_tmp = np.delete(case, y_idx, 0) + 1
+            x_j[:x_tmp.shape[0]] = x_tmp
+            batch_x[i,:] = x_j
+            batch_y[i] = y_j
+            count += 1
+            if count == len(cases):
+                random.shuffle(cases)
+                count = 0
+        yield ((batch_x, batch_y))
 
 
 def to_one_hot_with_gt_generator(cases, n_values, random_gt_index=True, normalize=False):

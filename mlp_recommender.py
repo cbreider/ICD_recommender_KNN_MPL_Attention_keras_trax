@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import pickle as pkl
 import os
 import tensorflow as tf
-import  numpy as np
+import numpy as np
 
 
 def RecommenderNet(n_in_classes, n_out_classes, n_layers, layer_size, decay_layer_size, dropout_rate, learning_rate,
@@ -107,6 +107,7 @@ if __name__ == '__main__':
     dropout_rate = args.dropout_rate
     embedding_size = args.embedding_size
     is_five_fold_cross_validation = args.do_five_fold  # TODO
+    transformer = True
 
     if out_folder is None:
         out_folder = "model_output/RUN_{}".format(datetime.now().strftime("%m_%d_%Y__%H_%M_%S"))
@@ -118,29 +119,26 @@ if __name__ == '__main__':
     text_file.close()
 
     #train_data, val_data, classes, len_input = dt.read_data_to_index(train_data_path, min_length=1, split_ratio=0.9)
-    train_data, val_data, classes, len_input = dt.read_train_and_val_data_to_index(train_data_path, test_data_path)
+    train_data, val_data, classes, _ = dt.read_train_and_val_data_to_index(train_data_path, test_data_path)
 
-    if embedding_size <= 0:
-        len_input = len(classes)
+    n_classes = len(classes)
 
     training_generator = data.Dataset.from_generator(
-        #lambda : dt.to_one_hot_with_gt_generator(train_data, len_input, True, False),
-        lambda : dt.get_input_sequence_and_gt(train_data, len_input),
+        lambda : dt.to_one_hot_with_gt_generator(train_data, n_classes, True, False),
+        #lambda : dt.get_input_sequence_and_gt(train_data, len_input, len(classes)),
         output_types=(tf.int32, tf.int32))
     training_generator = training_generator.shuffle(buffer_size=4096).batch(batch_size)
-
     validation_generator = data.Dataset.from_generator(
-        #lambda : dt.to_one_hot_with_gt_generator(val_data, len_input, True, False),
-        lambda : dt.get_input_sequence_and_gt(val_data, len_input),
+        lambda : dt.to_one_hot_with_gt_generator(val_data, n_classes, True, False),
+        #lambda : dt.get_input_sequence_and_gt(val_data, len_input, len(classes)),
         output_types=(tf.int32, tf.int32))
     validation_generator = validation_generator.shuffle(buffer_size=4096).batch(1)
-
     if model_path is not None:
         recommender = keras.models.load_model(model_path)
     else:
         # initial recommender system
         recommender = RecommenderNet(
-            n_in_classes=len_input,
+            n_in_classes=n_classes,
             n_out_classes=len(classes),
             embedding_size=embedding_size,
             n_layers=nr_hidden_layers,
@@ -149,10 +147,10 @@ if __name__ == '__main__':
             dropout_rate=dropout_rate,
             learning_rate=learning_rate)
 
-        # set params
+            # set params
         model_hist = recommender.fit(training_generator, validation_data=validation_generator,
-                                               epochs=num_epochs, use_multiprocessing=True,
-                                               workers=6, validation_freq=5)
+                                           epochs=num_epochs, use_multiprocessing=True,
+                                           workers=6, validation_freq=5)
 
         plt.plot(model_hist.history['top_k_categorical_accuracy'])
         plt.plot(model_hist.history['val_top_k_categorical_accuracy'])

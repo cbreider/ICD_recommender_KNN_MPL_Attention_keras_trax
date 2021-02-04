@@ -18,13 +18,7 @@ class KnnRecommender:
     KNN implmented by sklearn
     """
     def __init__(self, train_file, test_file, do_five_fold_cs):
-        """
-        Recommender requires path to data: movies data and ratings data
-        Parameters
-        ----------
-        path_movies: str, movies data file path
-        path_ratings: str, ratings data file path
-        """
+
         self.train_file = train_file
         self.test_file = test_file
         self.do_five_fold_cs = do_five_fold_cs
@@ -32,16 +26,7 @@ class KnnRecommender:
 
 
     def set_model_params(self, n_neighbors, algorithm, metric, n_jobs=None):
-        """
-        set model params for sklearn.neighbors.NearestNeighbors
-        Parameters
-        ----------
-        n_neighbors: int, optional (default = 5)
-        algorithm: {'auto', 'ball_tree', 'kd_tree', 'brute'}, optional
-        metric: string or callable, default 'minkowski', or one of
-            ['cityblock', 'cosine', 'euclidean', 'l1', 'l2', 'manhattan']
-        n_jobs: int or None, optional (default=None)
-        """
+
         if n_jobs and (n_jobs > 1 or n_jobs == -1):
             os.environ['JOBLIB_TEMP_FOLDER'] = '/tmp'
         self.model.set_params(**{
@@ -50,80 +35,42 @@ class KnnRecommender:
             'metric': metric,
             'n_jobs': n_jobs})
 
-    def _prep_data(self):
-        """
-        prepare data for recommender
-        1. movie-user scipy sparse matrix
-        2. hashmap of movie to row index in movie-user scipy sparse matrix
-        """
+    def make_recommendations(self, n_recommendations):
 
-        if not self.do_five_fold_cs:
-
-
-
-    def _inference(self, model, data, hashmap,
-                   fav_movie, n_recommendations):
-        """
-        return top n similar movie recommendations based on user's input movie
-        Parameters
-        ----------
-        model: sklearn model, knn model
-        data: movie-user matrix
-        hashmap: dict, map movie title name to index of the movie in data
-        fav_movie: str, name of user input movie
-        n_recommendations: int, top n recommendations
-        Return
-        ------
-        list of top n similar movie recommendations
-        """
-        # fit
-        model.fit(data)
-        # get input movie index
-        print('You have input movie:', fav_movie)
-        idx = self._fuzzy_matching(hashmap, fav_movie)
-        # inference
-        print('Recommendation system start to make inference')
-        print('......\n')
-        t0 = time.time()
-        distances, indices = model.kneighbors(
-            data[idx],
-            n_neighbors=n_recommendations+1)
-        # get list of raw idx of recommendations
-        raw_recommends = \
-            sorted(
-                list(
-                    zip(
-                        indices.squeeze().tolist(),
-                        distances.squeeze().tolist()
-                    )
-                ),
-                key=lambda x: x[1]
-            )[:0:-1]
-        print('It took my system {:.2f}s to make inference \n\
-              '.format(time.time() - t0))
-        # return recommendation (movieId, distance)
-        return raw_recommends
-
-    def make_recommendations(self, fav_movie, n_recommendations):
-        """
-        make top n movie recommendations
-        Parameters
-        ----------
-        fav_movie: str, name of user input movie
-        n_recommendations: int, top n recommendations
-        """
         # get data
-        movie_user_mat_sparse, hashmap = self._prep_data()
-        # get recommendations
-        raw_recommends = self._inference(
-            self.model, movie_user_mat_sparse, hashmap,
-            fav_movie, n_recommendations)
-        # print results
-        reverse_hashmap = {v: k for k, v in hashmap.items()}
-        print('Recommendations for {}:'.format(fav_movie))
-        for i, (idx, dist) in enumerate(raw_recommends):
-            print('{0}: {1}, with distance '
-                  'of {2}'.format(i+1, reverse_hashmap[idx], dist))
+        data_train, data_test, hashmap, _ = du.read_train_and_val_data_to_index(self.train_file, self.test_file)
+        train_data_one_hot = du.to_one_hot_train(data_train, len(hashmap))
+        self.model.fit(train_data_one_hot)
+
+        test_one_hot_gen = du.to_one_hot_with_gt_generator(data_test, len(hashmap), False)
+        correct = 0
+        for i in range(len(data_test)):
+            test_case, gt = next(test_one_hot_gen)
+            test_case =test_case.reshape((1, -1))
+            distances, indices = self.model.kneighbors(test_case, n_neighbors=100)
+            distances = distances.flatten()
+            indices = indices.flatten()
+            test_case = test_case.flatten().astype(np.float)
+            icd_pred = []
+            case_pred = np.zeros_like(test_case)
+            for j, idx in enumerate(indices):
+                case_pred += ((train_data_one_hot[idx, :].astype(np.float) - test_case) / distances[j])
+
+            pred_idx = case_pred.argsort()[-5:][::-1]
+            for idx in pred_idx:
+                icd_pred.append(hashmap[idx])
+            gt_idx = np.array(np.where(gt == 1)).item(0)
+            gt_icd = hashmap[gt_idx]
+            c = False
+            if gt_icd in icd_pred:
+                c = True
+                correct += 1
+            print(str(i) + " Predicted: " + str(icd_pred) + "   GT: " + gt_icd + "   " + str(c) + "   " + str(float(correct)/float(i+1)))
+
+        print("Top 5 Acc: " + str(float(correct)/float(len(data_test))))
+
+
+
 
 
 def parse_args():
@@ -146,15 +93,12 @@ if __name__ == '__main__':
     args = parse_args()
     train_data_path = args.train_file
     test_data_path = args.test_file
-    is_five_fold_cross_validation = args.ratings_filename
+    is_five_fold_cross_validation = args.do_five_fold
     top_n = args.top_n
 
     # initial recommender system
-    recommender = KnnRecommender(
-        os.path.join(data_path, movies_filename),
-        os.path.join(data_path, ratings_filename))
+    recommender = KnnRecommender(train_data_path, test_data_path, do_five_fold_cs=is_five_fold_cross_validation)
     # set params
-    recommender.set_filter_params(50, 50)
-    recommender.set_model_params(20, 'brute', 'cosine', -1)
+    recommender.set_model_params(20, 'brute', 'cosine', 6)
     # make recommendations
-    recommender.make_recommendations(movie_name, top_n)
+    recommender.make_recommendations(top_n)

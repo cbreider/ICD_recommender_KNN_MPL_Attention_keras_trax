@@ -6,14 +6,14 @@ import argparse
 import os
 import data_utils as dt
 import math
-
+from trax.layers import  metrics
 
 def RecommenderTransformer(n_classes_in, embedding_size, n_out_classes, dropout_rate):
     transfomer = tl.Serial(
         tl.Embedding(n_classes_in, d_feature=embedding_size),
-        tl.Flatten(),
         tl.Dropout(dropout_rate),
-        tl.SelfAttention(4),
+        tl.SelfAttention(2),
+        tl.Flatten(),
         tl.Dropout(dropout_rate),
         #tl.DotProductCausalAttention(4),
         tl.Dense(n_out_classes),
@@ -40,11 +40,11 @@ def parse_args():
                         help='number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=1024,
                         help='batch size for training')
-    parser.add_argument('--learning_rate', type=float, default=0.001,
+    parser.add_argument('--learning_rate', type=float, default=0.01,
                         help='learning rate')
     parser.add_argument('--dropout_rate', type=float, default=0.05,
                         help='dropout rate')
-    parser.add_argument('--embedding_size', type=int, default=64,
+    parser.add_argument('--embedding_size', type=int, default=32,
                         help='size of embedding_layer, choose 0 for no embedding layer')
     parser.add_argument('--do_five_fold', type=bool, default=False,
                         help='TODO')
@@ -77,6 +77,14 @@ if __name__ == '__main__':
     #train_data, val_data, classes, len_input = dt.read_data_to_index(train_data_path, min_length=1, split_ratio=0.9)
     train_data, val_data, classes, len_input = dt.read_train_and_val_data_to_index(train_data_path, test_data_path)
 
+    inputs_train = trax.data.Serial(
+      trax.data.Shuffle(),
+      trax.data.BucketByLength(boundaries=[4, 8, 16, 32, 89],
+                      batch_sizes=[64, 64,  32, 32, 16]))(dt.get_input_sequence_and_gt(train_data, len_input, batch_size))
+    inputs_test = trax.data.Serial(
+      trax.data.Shuffle(),
+      trax.data.BucketByLength(boundaries=[4, 8, 16, 32, 89],
+                      batch_sizes=[64, 64,  32, 32, 16]))(dt.get_input_sequence_and_gt(train_data, len_input, batch_size))
     recommender = RecommenderTransformer(n_classes_in=len(classes),
                                          embedding_size=embedding_size,
                                          n_out_classes=len(classes),
@@ -84,7 +92,7 @@ if __name__ == '__main__':
 
     n_train_b = math.floor(float(len(train_data)) / float(batch_size))
     train_task = ts.training.TrainTask(
-        labeled_data=dt.get_input_sequence_and_gt(train_data, len_input, batch_size),
+        labeled_data=inputs_train,
         loss_layer=tl.CategoryCrossEntropy(),
         optimizer=trax.optimizers.Adam(learning_rate),
         n_steps_per_checkpoint=400, #This will print the results at every 200 training steps.
@@ -92,7 +100,7 @@ if __name__ == '__main__':
     n_eval_b = math.floor(float(len(val_data)) / float(batch_size))
     # Evaluaton task.
     eval_task = ts.training.EvalTask(
-        labeled_data=dt.get_input_sequence_and_gt(val_data, len_input, batch_size),
+        labeled_data=inputs_test,
         metrics=[tl.CategoryCrossEntropy(), tl.CategoryAccuracy()],
         n_eval_batches=n_eval_b)
 

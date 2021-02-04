@@ -1,7 +1,7 @@
-from tensorflow.keras.layers import Concatenate, Dense, Dropout, Flatten, Input, Reshape, Dot, Embedding
+from tensorflow.keras.layers import Concatenate, Dense, Dropout, Flatten, Input, Reshape, Dot, Embedding, Conv1D
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.regularizers import l2
+from tensorflow.keras.regularizers import l2, l1
 from tensorflow.keras.layers import Add, Activation, Lambda
 from tensorflow import data, keras
 import argparse
@@ -12,6 +12,15 @@ import pickle as pkl
 import os
 import tensorflow as tf
 import numpy as np
+import sys
+np.set_printoptions(threshold=sys.maxsize)
+
+def label_smoothing(y_true,y_pred):
+    
+     #return tf.keras.losses.categorical_crossentropy(y_true,y_pred,label_smoothing=0.1)
+     #tf.print(y_pred)
+     return tf.keras.losses.categorical_crossentropy(y_true,y_pred)
+
 
 
 def RecommenderNet(n_in_classes, n_out_classes, n_layers, layer_size, decay_layer_size, dropout_rate, learning_rate,
@@ -32,16 +41,22 @@ def RecommenderNet(n_in_classes, n_out_classes, n_layers, layer_size, decay_laye
     """
     input_layer = Input(shape=(n_in_classes))
     x = input_layer
+    x = Reshape((-1, 1))(x)
+    x = Dropout(dropout_rate)(x)
+    x = Conv1D(filters=32, kernel_size=200, kernel_initializer='he_normal')(x)
 
+    x = Flatten()(x)
+    x = Activation('relu')(x)
     if embedding_size > 0:
-        embeddings = Embedding(n_out_classes, embedding_size, embeddings_initializer='he_normal',
-                               embeddings_regularizer=l2(1e-6))(input_layer)
+        embeddings = Embedding(n_out_classes, embedding_size, embeddings_initializer='he_normal')(x)
         embeddings_flat = Flatten()(embeddings)
         embeddings_d = Dropout(dropout_rate)(embeddings_flat)
         x = embeddings_d
 
     for i in range(0, n_layers):
-        x = Dense(layer_size, kernel_initializer='he_normal', kernel_regularizer=l2(0.001), bias_regularizer=l2(0.001))(x)
+        print(i)
+        x = Dense(layer_size, kernel_initializer='he_normal', kernel_regularizer=l2(0.00001))(x)
+        #x = Dense(layer_size, kernel_initializer='he_normal')(x)
         x = Activation('relu')(x)
         x = Dropout(dropout_rate)(x)
         if decay_layer_size:
@@ -52,7 +67,7 @@ def RecommenderNet(n_in_classes, n_out_classes, n_layers, layer_size, decay_laye
     model = Model(inputs=input_layer, outputs=y)
     opt = Adam(lr=learning_rate)
 
-    model.compile(loss="categorical_crossentropy", optimizer=opt,
+    model.compile(loss=label_smoothing, optimizer=opt,
                   metrics=['categorical_accuracy', 'top_k_categorical_accuracy'])
 
     return model
@@ -74,15 +89,15 @@ def parse_args():
                         help='number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=1024,
                         help='batch size for training')
-    parser.add_argument('--nr_hidden_layers', type=int, default=3,
+    parser.add_argument('--nr_hidden_layers', type=int, default=1,
                         help='number of hidden layers')
-    parser.add_argument('--layer_size', type=int, default=32,
+    parser.add_argument('--layer_size', type=int, default=1024,
                         help='size of layers')
-    parser.add_argument('--decay_layer_size', type=bool, default=False,
+    parser.add_argument('--decay_layer_size', type=bool, default=True,
                         help='half layer size for every layer')
-    parser.add_argument('--learning_rate', type=float, default=0.001,
+    parser.add_argument('--learning_rate', type=float, default=0.01,
                         help='learning rate')
-    parser.add_argument('--dropout_rate', type=float, default=0.05,
+    parser.add_argument('--dropout_rate', type=float, default=0.1,
                         help='dropout rate')
     parser.add_argument('--embedding_size', type=int, default=0,
                         help='size of embedding_layer, choose 0 for no embedding layer')
@@ -120,19 +135,20 @@ if __name__ == '__main__':
 
     #train_data, val_data, classes, len_input = dt.read_data_to_index(train_data_path, min_length=1, split_ratio=0.9)
     train_data, val_data, classes, _ = dt.read_train_and_val_data_to_index(train_data_path, test_data_path)
-
+    print(len(train_data))
+    print(len(val_data))
     n_classes = len(classes)
 
     training_generator = data.Dataset.from_generator(
         lambda : dt.to_one_hot_with_gt_generator(train_data, n_classes, True, False),
         #lambda : dt.get_input_sequence_and_gt(train_data, len_input, len(classes)),
         output_types=(tf.int32, tf.int32))
-    training_generator = training_generator.shuffle(buffer_size=4096).batch(batch_size)
+    training_generator = training_generator.shuffle(buffer_size=512).batch(batch_size)
     validation_generator = data.Dataset.from_generator(
         lambda : dt.to_one_hot_with_gt_generator(val_data, n_classes, True, False),
         #lambda : dt.get_input_sequence_and_gt(val_data, len_input, len(classes)),
         output_types=(tf.int32, tf.int32))
-    validation_generator = validation_generator.shuffle(buffer_size=4096).batch(1)
+    validation_generator = validation_generator.shuffle(buffer_size=512).batch(batch_size)
     if model_path is not None:
         recommender = keras.models.load_model(model_path)
     else:
@@ -150,7 +166,7 @@ if __name__ == '__main__':
             # set params
         model_hist = recommender.fit(training_generator, validation_data=validation_generator,
                                            epochs=num_epochs, use_multiprocessing=True,
-                                           workers=6, validation_freq=5)
+                                           workers=6, validation_freq=1)
 
         plt.plot(model_hist.history['top_k_categorical_accuracy'])
         plt.plot(model_hist.history['val_top_k_categorical_accuracy'])
@@ -172,7 +188,9 @@ if __name__ == '__main__':
     for id, icds in test_data.items():
         result = result + '"{}"'.format(id) + ','
         prediction = recommender.predict(np.array([icds,]))[0,:]
+        #print(prediction)
         top_five_pred = prediction.argsort()[-5:][::-1]
+        #print(top_five_pred)
         icd_string = '"'
         for top in top_five_pred:
             icd_name = classes[top]

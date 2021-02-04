@@ -57,11 +57,16 @@ def read_train_and_val_data_to_index(file_path_train, file_path_val):
     val_icd = filter_by_length(val_icd, min_length=1)
     train_icd_idx_list = get_icd_idx(train_icd, icd_distict)
     val_icd_idx_list = get_icd_idx(val_icd, icd_distict)
-    n_classes = max([len(c) for c in train_icd_idx_list + val_icd_idx_list])
+    train_icd_idx_list_tmp = train_icd_idx_list + val_icd_idx_list
+    random.shuffle(train_icd_idx_list_tmp)
+    idx = math.floor(len(train_icd_idx_list_tmp) * 0.9)
+    train_icd_idx_list = train_icd_idx_list_tmp[:idx]
+    val_icd_idx_list = train_icd_idx_list_tmp[idx:]
+    max_len = max([len(c) for c in train_icd_idx_list + val_icd_idx_list])
     del train_icd, val_icd
     gc.collect()
 
-    return train_icd_idx_list, val_icd_idx_list, icd_distict, n_classes
+    return train_icd_idx_list, val_icd_idx_list, icd_distict, max_len
 
 
 def read_test_data_for_prediction(file_path, icd_distict, normalize=False):
@@ -96,24 +101,17 @@ def get_input_sequence_and_gt(cases, max_len, batch_size):
     random.shuffle(cases)
     count = 0
     while True:
-        batch_x = np.zeros((batch_size, max_len), dtype=np.int32)
-        batch_y = np.zeros((batch_size,), dtype=np.int32)
-        for i in range(0, batch_size):
-            case = cases[count]
-            case.sort()
-            case_np = np.array(case)
-            y_idx = random.randint(0, (len(case)-1))
-            y_j = case_np[y_idx]
-            x_j = np.zeros((max_len), dtype=np.int32)
-            x_tmp = np.delete(case, y_idx, 0) + 1
-            x_j[:x_tmp.shape[0]] = x_tmp
-            batch_x[i,:] = x_j
-            batch_y[i] = y_j
-            count += 1
-            if count == len(cases):
-                random.shuffle(cases)
-                count = 0
-        yield ((batch_x, batch_y))
+        case = cases[count]
+        case.sort()
+        case_np = np.array(case)
+        y_idx = random.randint(0, (len(case)-1))
+        y_j = np.array([case_np[y_idx]]).reshape((1,))
+        #x_j = np.zeros((max_len), dtype=np.int32)
+        x_tmp = np.delete(case, y_idx, 0) + 1
+        #x_j[:x_tmp.shape[0]] = x_tmp
+        count += 1
+
+        yield x_tmp, y_j
 
 
 def to_one_hot_with_gt_generator(cases, n_values, random_gt_index=True, normalize=False):
@@ -136,5 +134,15 @@ def to_one_hot_with_gt_generator(cases, n_values, random_gt_index=True, normaliz
             train_vector_x /= avg
         yield train_vector_x, y
 
+
+
+def to_one_hot_train(cases, n_values):
+    random.shuffle(cases)
+    x = np.zeros((len(cases), n_values), dtype=np.int32)
+    for i, case in enumerate(cases):
+        oh = to_one_hot(case, n_values)
+        train_vector_x = np.sum(oh, axis=0)
+        x[i, :] = train_vector_x
+    return  x
 
 
